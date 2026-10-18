@@ -29,8 +29,11 @@ def parse_time(text):
     """
     cleaned = text.strip().lower().replace(" ", "")
     suffix = ""
-    # Accept "am", "pm", "a.m." and "p.m." (dots are only allowed in the suffix).
-    for ending in ("a.m.", "p.m.", "am", "pm"):
+    # Accept "am", "pm", "a.m.", "a.m" and "am." (dots are only allowed in the suffix,
+    # so "9.30" is still rejected).
+    if cleaned.endswith("m."):
+        cleaned = cleaned[:-1]
+    for ending in ("a.m", "p.m", "am", "pm"):
         if cleaned.endswith(ending):
             suffix = ending[0] + "m"
             cleaned = cleaned[:-len(ending)]

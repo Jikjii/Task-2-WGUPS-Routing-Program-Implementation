@@ -33,10 +33,11 @@ PACKAGE 9 AT 10:00 AM
   Delivery address : 300 State St
                      (wrong address listed - WGUPS receives the corrected address at 10:20 AM)
   Delivery city    : Salt Lake City
+  Delivery state   : UT
   Delivery zip code: 84103
   Delivery deadline: EOD
   Package weight   : 2 kg
-  Delivery status  : At the hub
+  Delivery status  : At the hub - leaves 10:20 AM
   Assigned truck   : 3
   Special note     : Wrong address listed
 ----------------------------------------------------------------------
@@ -56,6 +57,7 @@ PACKAGE 9 AT 11:15 AM
   Delivery address : 410 S State St
                      (corrected at 10:20 AM; originally listed as 300 State St, 84103)
   Delivery city    : Salt Lake City
+  Delivery state   : UT
   Delivery zip code: 84111
   Delivery deadline: EOD
   Package weight   : 2 kg

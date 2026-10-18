@@ -116,6 +116,11 @@ def lookup_package(package_table, package_id, query_time):
     return address, deadline_label(package), city, zip_code, package.weight, status_text
 
 
+def package_state(package, query_time):
+    """The delivery state (e.g. UT) as known at query_time (it can change with a correction)."""
+    return package.address_at(query_time)[2]
+
+
 # ------------------------------------------------------------------------ reports (D)
 def print_banner(trucks, checks):
     """Start-up summary: every rule check, the total mileage, and each truck's day."""
@@ -150,11 +155,15 @@ def print_all_packages(package_table, trucks, query_time):
     counts = [0, 0, 0, 0]
     footnotes = []
     for truck in trucks:
+        if truck.departure_time is None:
+            print(f"TRUCK {truck.truck_id} | not used today (no packages)")
+            print()
+            continue
         print(f"TRUCK {truck.truck_id} | Driver {truck.driver_id} | {truck.status_at(query_time)} | "
               f"Miles driven so far: {truck.miles_at(query_time):.1f} of {truck.total_miles:.1f}")
         print(TABLE_LINE)
-        print(f"{'ID':>3}  {'Delivery Address':<39}{'City':<18}{'Zip':<7}{'Deadline':<10}"
-              f"{'Kg':>4}  Delivery Status")
+        print(f"{'ID':>2}  {'Delivery Address':<39}{'City':<17}{'St':<4}{'Zip':<7}{'Deadline':<9}"
+              f"{'Kg':>3}  Delivery Status")
         print(TABLE_LINE)
         for package_id in sorted(truck.package_ids):
             package = package_table.lookup(package_id)
@@ -167,8 +176,9 @@ def print_all_packages(package_table, trucks, query_time):
                 footnotes.append(
                     f"* Package {package_id}: wrong address listed. WGUPS receives the corrected "
                     f"address at {format_time(package.correction.effective_time)}.")
-            print(f"{package_id:>3}  {address:<39}{city:<18}{zip_code:<7}{deadline:<10}"
-                  f"{weight:>4}  {status_text}")
+            state = package_state(package, query_time)
+            print(f"{package_id:>2}  {address:<39}{city:<17}{state:<4}{zip_code:<7}{deadline:<9}"
+                  f"{weight:>3}  {status_text}")
         print()
     for note in footnotes:
         print(note)
@@ -203,6 +213,7 @@ def print_one_package(package_table, trucks, package_id, query_time):
             print(f"                     (corrected at {fix_time}; originally listed as "
                   f"{package.listed_address}, {package.listed_zip_code})")
     print(f"  Delivery city    : {city}")
+    print(f"  Delivery state   : {package_state(package, query_time)}")
     print(f"  Delivery zip code: {zip_code}")
     print(f"  Delivery deadline: {deadline}")
     print(f"  Package weight   : {weight} kg")
@@ -345,9 +356,11 @@ def main():
     """Simulate the day once, then answer questions from the menu or the command line."""
     try:
         package_table, trucks, checks = build_day()
-    except (OSError, ValueError, KeyError) as error:
-        # A missing file, an unreadable value, or an impossible load: explain and stop.
-        print(f"Could not plan the delivery day: {error}")
+    except (OSError, ValueError, KeyError, IndexError) as error:
+        # A missing file, a short or unreadable row, an unknown address, or an
+        # impossible load: explain in one line and stop.
+        message = error.args[0] if isinstance(error, KeyError) and error.args else error
+        print(f"Could not plan the delivery day: {message}")
         return 1
 
     arguments = sys.argv[1:]

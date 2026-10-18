@@ -150,8 +150,8 @@ class Package:
         Return (status, status_text) for this package at `query_time`.
 
         status is one of: Delayed, At the hub, En route, Delivered.
-        status_text adds the time, e.g. "Delivered at 09:24 AM" or
-        "En route - left hub 08:00 AM".
+        status_text adds the relevant time, e.g. "Delivered at 09:24 AM",
+        "En route - left hub 08:00 AM", "At the hub - leaves 10:20 AM".
         """
         if self.delivery_time is not None and query_time >= self.delivery_time:
             return STATUS_DELIVERED, f"Delivered at {format_time(self.delivery_time)}"
@@ -159,4 +159,6 @@ class Package:
             return STATUS_EN_ROUTE, f"En route - left hub {format_time(self.departure_time)}"
         if self.hub_arrival_time is not None and query_time < self.hub_arrival_time:
             return STATUS_DELAYED, f"Delayed - arrives at hub {format_time(self.hub_arrival_time)}"
+        if self.departure_time is not None:
+            return STATUS_AT_HUB, f"At the hub - leaves {format_time(self.departure_time)}"
         return STATUS_AT_HUB, "At the hub"
