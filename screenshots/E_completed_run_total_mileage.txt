@@ -1,0 +1,73 @@
+======================================================================================================================
+                            WGUPS ROUTING PROGRAM - Salt Lake City daily local deliveries                             
+======================================================================================================================
+Constraint check for the planned day:
+  [PASS] All packages delivered: 40 of 40 delivered
+  [PASS] Delivery deadlines met: 14 deadline packages on time (closest call: 13 min to spare)
+  [PASS] Truck capacity (16 max): T1=16, T2=16, T3=8
+  [PASS] Truck restrictions: packages [3, 18, 36, 38] all on their required truck
+  [PASS] Delayed packages leave after arriving at the hub: packages [6, 25, 28, 32] left at or after their arrival
+  [PASS] Packages that must be delivered together: packages [13, 14, 15, 16, 19, 20] on truck 1
+  [PASS] Wrong address corrected: #9 left hub 10:20 AM (fix known 10:20 AM); delivered to 410 S State St at 11:12 AM
+  [PASS] Trucks leave no earlier than 08:00 AM: T1 08:00 AM, T2 09:05 AM, T3 10:20 AM
+  [PASS] Drivers (2 available): at most 2 trucks on the road at once; T1=driver 1, T2=driver 2, T3=driver 1
+  [PASS] Total mileage under 140 miles: 93.5 miles
+----------------------------------------------------------------------------------------------------------------------
+Result: ALL CONSTRAINTS MET | Total mileage traveled by all trucks: 93.5 miles
+  Truck 1:  34.0 miles | driver 1 | left hub 08:00 AM | back at hub 09:54 AM | 16 packages
+  Truck 2:  31.7 miles | driver 2 | left hub 09:05 AM | last delivery 10:51 AM | 16 packages
+  Truck 3:  27.8 miles | driver 1 | left hub 10:20 AM | last delivery 11:53 AM | 8 packages
+======================================================================================================================
+
+======================================================================================================================
+                                               END OF DAY ROUTE REPORT                                                
+======================================================================================================================
+TRUCK 1 | Driver 1 | 16 packages | route: nearest neighbor | 34.0 miles
+----------------------------------------------------------------------------------------------------------------------
+  08:00 AM     0.0 mi  4001 South 700 East (Western Governors University)                      (hub)
+  08:07 AM     1.9 mi  4300 S 1300 E (Cottonwood Regional Softball Complex)                    #14
+  08:13 AM     3.9 mi  4580 S 2300 E (Holiday City Office)                                     #15, #16, #34
+  08:30 AM     8.9 mi  3595 Main St (Housing Auth. of Salt Lake County)                        #20
+  08:32 AM     9.4 mi  177 W Price Ave (Salt Lake City Division of Health Services)            #19
+  08:37 AM    11.1 mi  380 W 2880 S (Utah DMV Administrative Office)                           #4, #40
+  08:41 AM    12.2 mi  195 W Oakland Ave (South Salt Lake Public Works)                        #1
+  08:50 AM    15.0 mi  1330 2100 S (Sugar House Park)                                          #7, #29
+  09:05 AM    19.3 mi  410 S State St (Third District Juvenile Court)                          #5, #37
+  09:08 AM    20.3 mi  300 State St (Council Hall)                                             #30
+  09:22 AM    24.5 mi  2010 W 500 S (Salt Lake City Streets and Sanitation)                    #13
+  09:41 AM    30.3 mi  3365 S 900 W (Salt Lake County/United Police Dept)                      #31
+  09:54 AM    34.0 mi  4001 South 700 East (Western Governors University)                      (hub)
+
+TRUCK 2 | Driver 2 | 16 packages | route: nearest neighbor | 31.7 miles
+----------------------------------------------------------------------------------------------------------------------
+  09:05 AM     0.0 mi  4001 South 700 East (Western Governors University)                      (hub)
+  09:12 AM     2.0 mi  3595 Main St (Housing Auth. of Salt Lake County)                        #21
+  09:16 AM     3.2 mi  2835 Main St (South Salt Lake Police)                                   #28
+  09:20 AM     4.3 mi  2530 S 500 E (Columbus Library)                                         #2, #33
+  09:32 AM     8.0 mi  3148 S 1100 W (Salt Lake County Mental Health)                          #17
+  09:34 AM     8.6 mi  3365 S 900 W (Salt Lake County/United Police Dept)                      #32
+  09:39 AM    10.1 mi  3060 Lester St (Redwood Park)                                           #6
+  09:44 AM    11.7 mi  2300 Parkway Blvd (Deker Lake)                                          #36
+  09:58 AM    15.7 mi  1488 4800 S (Taylorsville-Bennion Heritage City Gov Off)                #18
+  10:00 AM    16.3 mi  5100 South 2700 West (Valley Regional Softball Complex)                 #23
+  10:01 AM    16.7 mi  2600 Taylorsville Blvd (Taylorsville City Hall)                         #11
+  10:17 AM    21.6 mi  5383 South 900 East #104 (City Center of Rock Springs)                  #25, #26
+  10:46 AM    30.1 mi  410 S State St (Third District Juvenile Court)                          #38
+  10:49 AM    31.1 mi  233 Canyon Rd (Salt Lake City Ottinger Hall)                            #3
+  10:51 AM    31.7 mi  300 State St (Council Hall)                                             #8
+
+TRUCK 3 | Driver 1 | 8 packages | route: nearest neighbor | 27.8 miles
+----------------------------------------------------------------------------------------------------------------------
+  10:20 AM     0.0 mi  4001 South 700 East (Western Governors University)                      (hub)
+  10:28 AM     2.4 mi  5025 State St (Murray City Museum)                                      #24
+  10:39 AM     5.5 mi  6351 South 900 East (Wheeler Historic Farm)                             #22
+  11:06 AM    13.8 mi  600 E 900 South (Rice Terrace Pavilion Park)                            #10
+  11:12 AM    15.6 mi  410 S State St (Third District Juvenile Court)                          #9
+  11:23 AM    18.8 mi  2010 W 500 S (Salt Lake City Streets and Sanitation)                    #39
+  11:28 AM    20.4 mi  1060 Dalton Ave S (International Peace Gardens)                         #27, #35
+  11:53 AM    27.8 mi  3575 W Valley Central Station bus Loop (West Valley Prosecutor)         #12
+
+----------------------------------------------------------------------------------------------------------------------
+All 40 packages delivered: yes | All constraints met: yes
+TOTAL MILEAGE TRAVELED BY ALL TRUCKS: 93.5 miles (limit 140 miles)
+======================================================================================================================
