@@ -54,7 +54,8 @@ class Package:
         self.hub_arrival_time = None    # e.g. "Delayed on flight ... until 9:05 am" -> 9:05
         self.bundle_ids = []            # e.g. "Must be delivered with 15, 19" -> [15, 19]
         self.has_wrong_address = False  # "Wrong address listed"
-        self.correction = None          # AddressCorrection once WGUPS supplies the fix
+        self.correction = None          # known future fix, attached at start-up; its address
+                                        # is only used at or after its effective time
 
         # Keep the address as originally listed so the status report can show what the
         # supervisor would have seen before the address was corrected.
@@ -64,6 +65,11 @@ class Package:
         self.listed_zip_code = zip_code
 
         # ---- Delivery record (filled in by the delivery simulation) ----
+        # `status` is inserted into the hash table with the package ("At the hub", or
+        # "Delayed" for late-arriving packages). The simulation then moves it to
+        # "En route" and "Delivered", stamping departure_time and delivery_time. Because
+        # the whole day is simulated at start-up, the status at an EARLIER time of day
+        # comes from status_at(query_time), which replays those recorded timestamps.
         self.status = STATUS_AT_HUB
         self.truck_id = None
         self.departure_time = None
@@ -77,7 +83,9 @@ class Package:
         Translate the free-text "Special Notes" column into structured constraints.
 
         The patterns are generic: a package file from another city that uses the same
-        wording (truck numbers, delay times, bundles) works without code changes.
+        wording (truck numbers, delay times, bundles) needs no code changes. A "Wrong
+        address listed" note also needs a matching AddressCorrection in main.py's
+        settings. Without one, the validation report flags the package.
         """
         note = self.notes.lower()
         if not note:
@@ -87,8 +95,11 @@ class Package:
         if truck_match:
             self.required_truck = int(truck_match.group(1))
 
-        delay_match = re.search(r"until\s*(\d{1,2}:\d{2}\s*[ap]\.?m\.?)", note)
-        if "delayed" in note and delay_match:
+        if "delayed" in note:
+            delay_match = re.search(r"until\s*(\d{1,2}:\d{2}(?:\s*[ap]\.?m\.?)?)", note)
+            if delay_match is None:
+                raise ValueError(f"Package {self.package_id}: cannot read the arrival time "
+                                 f"in the note '{self.notes}'.")
             self.hub_arrival_time = parse_time(delay_match.group(1))
             self.status = STATUS_DELAYED
 
@@ -139,18 +150,13 @@ class Package:
         Return (status, status_text) for this package at `query_time`.
 
         status is one of: Delayed, At the hub, En route, Delivered.
-        status_text adds the time, e.g. "Delivered at 09:24 AM".
+        status_text adds the time, e.g. "Delivered at 09:24 AM" or
+        "En route - left hub 08:00 AM".
         """
         if self.delivery_time is not None and query_time >= self.delivery_time:
             return STATUS_DELIVERED, f"Delivered at {format_time(self.delivery_time)}"
         if self.departure_time is not None and query_time >= self.departure_time:
-            return STATUS_EN_ROUTE, (f"En route on truck {self.truck_id} "
-                                     f"(left hub {format_time(self.departure_time)})")
+            return STATUS_EN_ROUTE, f"En route - left hub {format_time(self.departure_time)}"
         if self.hub_arrival_time is not None and query_time < self.hub_arrival_time:
-            return STATUS_DELAYED, (f"Delayed on flight - arrives at hub "
-                                    f"{format_time(self.hub_arrival_time)}")
+            return STATUS_DELAYED, f"Delayed - arrives at hub {format_time(self.hub_arrival_time)}"
         return STATUS_AT_HUB, "At the hub"
-
-    def __str__(self):
-        return (f"Package {self.package_id}: {self.address}, {self.city}, {self.state} "
-                f"{self.zip_code} | deadline {self.deadline_text} | {self.weight} kg | {self.status}")

@@ -5,9 +5,14 @@ data_loader.py - Reads the WGUPS CSV files and builds the program's data structu
     data/addresses.csv  -> the list of delivery locations (row 0 is the hub)
     data/distances.csv  -> the lower-triangular distance matrix, mirrored to a full matrix
 
-The CSV files are exported straight from the "WGUPS Package File" and "WGUPS Distance
-Table" spreadsheets. To run the program for a different city, replace these three
-files. No code changes are needed.
+The CSV files hold the data from the "WGUPS Package File" and "WGUPS Distance Table"
+spreadsheets. The street text in addresses.csv was matched to the package file, because
+a package's address must match its location's address to find its distances (case
+and extra spaces are ignored). The spreadsheet itself spells some addresses two ways,
+such as "5383 S 900 East #104" and "5383 South 900 East #104". To run the program for
+another city, replace the three CSV files and adjust the settings at the top of
+main.py (trucks, drivers, start time, mileage limit, known address corrections). The
+routing code itself does not change.
 """
 
 import csv

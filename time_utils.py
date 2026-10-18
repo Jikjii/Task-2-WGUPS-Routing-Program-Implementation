@@ -24,19 +24,25 @@ def travel_time(miles, speed_mph):
 def parse_time(text):
     """
     Turn user or file text such as "9:05 am", "10:30 AM", "13:15" or "1:05pm" into a
-    timedelta. Raise ValueError with a friendly message if the text is not a valid time.
+    timedelta. Without AM/PM the 24-hour clock is used, so "13:15" is 1:15 PM.
+    Raise ValueError with a friendly message if the text is not a valid time.
     """
-    cleaned = text.strip().lower().replace(".", "").replace(" ", "")
+    cleaned = text.strip().lower().replace(" ", "")
     suffix = ""
-    if cleaned.endswith("am") or cleaned.endswith("pm"):
-        suffix = cleaned[-2:]
-        cleaned = cleaned[:-2]
+    # Accept "am", "pm", "a.m." and "p.m." (dots are only allowed in the suffix).
+    for ending in ("a.m.", "p.m.", "am", "pm"):
+        if cleaned.endswith(ending):
+            suffix = ending[0] + "m"
+            cleaned = cleaned[:-len(ending)]
+            break
 
     parts = cleaned.split(":")
-    if len(parts) == 1 and parts[0].isdigit():
-        parts.append("0")  # allow "9 am" as shorthand for "9:00 am"
-    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
-        raise ValueError(f"'{text}' is not a valid time. Use a format like 9:30 AM or 13:15.")
+    if len(parts) == 1 and parts[0].isdecimal() and len(parts[0]) <= 2:
+        parts.append("00")  # allow "9 am" as shorthand for "9:00 am"
+    if (len(parts) != 2 or not parts[0].isdecimal() or not parts[1].isdecimal()
+            or len(parts[0]) > 2 or len(parts[1]) != 2):
+        raise ValueError(f"'{text}' is not a valid time. Use a format like 9:30 AM, "
+                         f"1:05 PM, or 24-hour 13:05.")
 
     hours, minutes = int(parts[0]), int(parts[1])
     if minutes > 59:

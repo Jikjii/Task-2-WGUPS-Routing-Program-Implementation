@@ -29,7 +29,7 @@ class Truck:
         self.speed_mph = speed_mph
 
         self.package_ids = []        # every package loaded onto this truck at the hub
-        self.ready_time = None       # earliest time every loaded package can leave the hub
+        self.ready_time = None       # earliest time ALL loaded packages can leave the hub
         self.driver_id = None
         self.departure_time = None
         self.stops = []              # RouteStop list, in the order they were visited
@@ -62,7 +62,9 @@ class Truck:
 
     def status_at(self, query_time):
         """A one-line description of the truck at `query_time`."""
-        if self.departure_time is None or query_time < self.departure_time:
+        if self.departure_time is None:
+            return "Not used today (no packages)"
+        if query_time < self.departure_time:
             return f"At the hub (scheduled to leave {format_time(self.departure_time)})"
         if query_time >= self.end_time:
             if self.returns_to_hub:

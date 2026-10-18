@@ -3,8 +3,9 @@ distance_table.py - Distances between every pair of delivery locations.
 
 The WGUPS Distance Table spreadsheet is a lower-triangular matrix: the distance from
 location A to location B is written only once, because it is the same in both
-directions. This class mirrors that triangle into a full square matrix (a list of
-lists) so any distance is a single O(1) list access: matrix[from][to].
+directions. data_loader.load_distance_table mirrors that triangle into a full square
+matrix (a list of lists), and this class stores it, so any distance is a single O(1)
+list access: matrix[from][to].
 
 Addresses are turned into matrix row numbers with the program's own ChainingHashTable
 (no built-in dictionary), so finding a location is also O(1) on average.

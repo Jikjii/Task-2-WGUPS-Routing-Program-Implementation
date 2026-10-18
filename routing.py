@@ -1,49 +1,64 @@
 """
-routing.py - Decides which truck carries each package, the order of the stops, and
-when each truck leaves. This file holds the core algorithm.
+routing.py - Decides which truck carries each package, when each truck leaves, and
+the order of its stops. This file holds the core algorithm.
 
 THE ALGORITHM, IN THREE STEPS
 -----------------------------
 1. LOAD THE TRUCKS (constraint-aware greedy loading)
    a. Packages that "must be delivered with" each other are joined into one bundle
       (a union-find over package IDs). A bundle always rides on one truck.
-   b. Bundles are placed by rules, most constrained first:
-        - a required truck ("Can only be on truck 2")      -> that truck
-        - delayed packages ("will not arrive until 9:05")  -> the LATE truck, which
-                                                              waits at the hub for them
-        - a wrong address, fixed later in the day           -> the SECOND-WAVE truck,
-                                                              which leaves after the fix
-        - any other delivery deadline                       -> the EARLY truck (leaves
-                                                              at 8:00 AM)
-        - end-of-day (EOD) packages                         -> see (c)
-   c. EOD bundles are placed by a self-adjusting "nearest cluster" rule. Each round
-      picks the unplaced bundle that is closest (in miles) to any address already on
-      a truck with room, and puts it on that truck. Packages for the same address,
-      or for a nearby one, end up on the same truck, which keeps the routes short.
+   b. Bundles are loaded most-constrained first, in this order:
+        1) a required truck ("Can only be on truck 2")   -> that truck
+        2) delayed ("will not arrive until 9:05 am")      -> the LATE truck, which
+                                                             waits at the hub for them
+        3) a wrong address that is fixed later in the day -> the SECOND-WAVE truck,
+                                                             which leaves after the fix
+        4) any other delivery deadline (earliest first)   -> the EARLY truck
+        5) end-of-day (EOD)                               -> see (c)
+      If the preferred truck is full, or could not reach a deadline in time even by
+      driving straight from the hub, the next truck in the list is used.
+   c. EOD bundles are placed by a self-adjusting "nearest cluster" rule. Each round,
+      the unplaced bundle closest (in miles) to any known address already on a truck
+      with room goes onto that truck. An empty truck is measured from the hub. Ties go
+      to the lower package ID, then the lower truck number. Packages for the same or
+      a nearby address therefore tend to share a truck while it has room.
 
-2. ORDER THE STOPS (nearest-neighbor heuristic, with a deadline-first variant)
+2. DISPATCH THE TRUCKS (only as many trucks on the road as there are drivers)
+   Trucks with the most urgent deadline go first, then trucks that are ready
+   earliest. A truck is "ready" once every package on it is at the hub with a
+   known address: 9:05 AM for the delayed packages, 10:20 AM for package 9. If no
+   driver is free, the truck waits for the driver who can get back to the hub
+   soonest. That driver's current truck drives back to the hub. Every other truck
+   ends the day at its last stop, because the day ends when the last package is
+   delivered.
+
+3. ORDER THE STOPS (nearest-neighbor heuristic), done for each truck as it leaves
    Starting at the hub, the truck always drives to the closest address it still has
-   packages for, and drops off every package for that address at once. This is a
-   greedy, self-adjusting heuristic: each choice depends on where the truck is now.
-   Two variants are tried for every truck:
+   packages for, and drops off every package for that address at once. This greedy
+   heuristic is self-adjusting: each choice depends on where the truck is now.
+   Three variants are tried for every truck:
         - plain nearest neighbor
-        - deadline-first nearest neighbor (stops with a deadline package come first)
-   The shorter variant that delivers every package on time is kept.
+        - deadline-first nearest neighbor (any stop with a deadline package first)
+        - earliest-deadline-first nearest neighbor (the most urgent deadline first)
+   The shortest variant that delivers every package on time is kept. Routing
+   happens inside dispatch, because the deadline checks need the truck's departure
+   time and package 9's corrected address.
 
-3. DISPATCH THE TRUCKS (only as many trucks on the road as there are drivers)
-   Trucks leave in order of their ready time (the latest time any of their packages
-   can leave the hub). When no driver is free, the truck waits for the driver who can
-   get back to the hub soonest. Only that driver's truck drives back to the hub;
-   the other trucks end the day at their last stop.
+LIMITS: each truck makes one trip, so a day holds at most trucks x capacity
+packages (3 x 16 = 48 here). Route variants are compared on one-way miles, because
+whether a truck must drive back to the hub is decided later, when another truck
+needs its driver.
 
-COMPLEXITY (n packages, L locations, T trucks, B bundles)
-   Bundling O(n * a(n)) | Loading O(B^2 * n) | Routing O(n * L) per truck |
-   Dispatch O(T^2)   -> overall O(n^3) in the worst case, which is instant for 40 packages.
+COMPLEXITY (n packages, B bundles, k packages on one truck, T trucks, D drivers)
+   Bundling O(n log n) | Loading O(B * n^2) | Routing O(k^2) per truck |
+   Dispatch O(T * D + n) -> overall O(n^3) in the worst case, instant for 40 packages.
 """
 
-from package import STATUS_DELIVERED
+from package import STATUS_DELIVERED, STATUS_EN_ROUTE
 from time_utils import travel_time
 from truck import RouteStop
+
+NO_DEADLINE = float("inf")  # used to sort EOD packages after every real deadline
 
 
 # --------------------------------------------------------------------------- bundles
@@ -51,17 +66,18 @@ def build_bundles(package_table):
     """
     Join packages that must travel together into bundles, using union-find.
 
-    "Must be delivered with" is transitive: if 14 goes with 15 and 19, and 16 goes with
-    13 and 19, then 13, 14, 15, 16, 19 and 20 must all share one truck. Union-find
-    merges these groups efficiently. The parent links are kept in a plain list indexed
-    by package ID (no dictionary).
+    "Must be delivered with" is transitive. Package 14 goes with 15 and 19, 16 with 13
+    and 19, and 20 with 13 and 15, so 13, 14, 15, 16, 19 and 20 must all share one
+    truck. Union-find merges these groups. The parent links are kept in a plain list
+    indexed by package ID (no dictionary). Returns a list of bundles, each a sorted
+    list of package IDs, ordered by their lowest package ID.
     """
     package_ids = package_table.keys()
     largest_id = package_ids[-1] if package_ids else 0
     parent = list(range(largest_id + 1))
 
     def find(package_id):
-        # Follow parent links to the group's root, flattening the path as we go.
+        # Follow parent links to the group's root, shortening the path as we go.
         while parent[package_id] != package_id:
             parent[package_id] = parent[parent[package_id]]
             package_id = parent[package_id]
@@ -70,14 +86,14 @@ def build_bundles(package_table):
     def union(first_id, second_id):
         root_a, root_b = find(first_id), find(second_id)
         if root_a != root_b:
-            parent[root_b] = root_a
+            parent[max(root_a, root_b)] = min(root_a, root_b)  # lowest ID becomes the root
 
     for package_id in package_ids:
         for partner_id in package_table.lookup(package_id).bundle_ids:
             if partner_id in package_table:
                 union(package_id, partner_id)
 
-    # Collect the members of each group (list of lists, ordered by root ID).
+    # Collect the members of each group (list of lists, indexed by root ID).
     members_by_root = []
     for _ in range(largest_id + 1):
         members_by_root.append([])
@@ -86,7 +102,27 @@ def build_bundles(package_table):
     return [members for members in members_by_root if members]
 
 
-# --------------------------------------------------------------------------- loading
+# --------------------------------------------------------------- bundle/truck facts
+def _earliest_deadline(package_ids, package_table):
+    """The earliest deadline among the packages, in seconds (NO_DEADLINE if all are EOD)."""
+    earliest = NO_DEADLINE
+    for package_id in package_ids:
+        deadline = package_table.lookup(package_id).deadline
+        if deadline is not None and deadline.total_seconds() < earliest:
+            earliest = deadline.total_seconds()
+    return earliest
+
+
+def _ready_time(package_ids, package_table, day_start):
+    """The earliest time ALL these packages can leave the hub (delays, address fixes)."""
+    ready = day_start
+    for package_id in package_ids:
+        package_ready = package_table.lookup(package_id).earliest_ready_time(day_start)
+        if package_ready > ready:
+            ready = package_ready
+    return ready
+
+
 def _bundle_required_truck(bundle, package_table):
     """The truck number a bundle is restricted to, or None. Conflicts are an error."""
     required = None
@@ -107,41 +143,89 @@ def _bundle_has(bundle, package_table, test):
     return False
 
 
-def _first_truck_with_room(preferred_trucks, bundle):
+def _can_take(truck, bundle, package_table, distance_table, day_start):
+    """
+    A truck can take a bundle if it has room AND, with the bundle on board, every
+    deadline package it would carry could still make its deadline by driving straight
+    from the hub at the truck's ready time. (A real route can only be slower, so this
+    check rules out hopeless choices. It does not promise a feasible route.)
+    """
+    if not truck.has_room_for(len(bundle)):
+        return False
+    combined = truck.package_ids + bundle
+    leaves_at = _ready_time(combined, package_table, day_start)
+    for package_id in combined:
+        package = package_table.lookup(package_id)
+        if package.deadline is None:
+            continue
+        arrival = leaves_at
+        if _known_address(package) is not None:
+            miles = distance_table.distance_between(distance_table.hub_address, package.address)
+            arrival = leaves_at + travel_time(miles, truck.speed_mph)
+        if arrival > package.deadline:
+            return False
+    return True
+
+
+def _choose_truck(preferred_trucks, bundle, package_table, distance_table, day_start):
+    """
+    The first truck in preference order that can take the bundle. If none passes the
+    deadline check, fall back to the first one with room. The validation report then
+    shows exactly which deadline is at risk, instead of the program stopping.
+    """
+    for truck in preferred_trucks:
+        if _can_take(truck, bundle, package_table, distance_table, day_start):
+            return truck
     for truck in preferred_trucks:
         if truck.has_room_for(len(bundle)):
             return truck
     raise ValueError(f"No truck has room for bundle {bundle}.")
 
 
+def _known_address(package):
+    """
+    The address to plan around while loading at the start of the day. A package whose
+    listed address is known to be wrong has no usable address yet, so it is skipped.
+    """
+    if package.has_wrong_address or package.correction is not None:
+        return None
+    return package.address
+
+
 def _distance_to_truck(bundle, truck, package_table, distance_table):
     """
-    How close a bundle is to the packages already on a truck: the shortest distance
-    from any bundle address to any address on the truck. An empty truck is measured
-    from the hub.
+    How close a bundle is to a truck's current load: the shortest distance from any
+    bundle address to any known address on the truck. If the truck has no known
+    addresses yet, distance is measured from the hub.
     """
-    best = None
+    anchors = []
+    for loaded_id in truck.package_ids:
+        address = _known_address(package_table.lookup(loaded_id))
+        if address is not None:
+            anchors.append(address)
+    if not anchors:
+        anchors.append(distance_table.hub_address)
+
+    best = NO_DEADLINE
     for package_id in bundle:
-        bundle_address = package_table.lookup(package_id).address
-        if not truck.package_ids:
-            miles = distance_table.distance_between(distance_table.hub_address, bundle_address)
-            best = miles if best is None or miles < best else best
+        bundle_address = _known_address(package_table.lookup(package_id))
+        if bundle_address is None:
             continue
-        for loaded_id in truck.package_ids:
-            loaded_address = package_table.lookup(loaded_id).address
-            miles = distance_table.distance_between(loaded_address, bundle_address)
-            if best is None or miles < best:
+        for anchor in anchors:
+            miles = distance_table.distance_between(anchor, bundle_address)
+            if miles < best:
                 best = miles
     return best
 
 
-def load_trucks(package_table, distance_table, trucks):
+# --------------------------------------------------------------------------- loading
+def load_trucks(package_table, distance_table, trucks, day_start):
     """
     Step 1 of the algorithm: assign every package to a truck (see the module docstring).
 
-    trucks[0] is the EARLY truck, trucks[1] the LATE truck (waits for delayed packages),
-    and trucks[-1] the SECOND-WAVE truck (leaves when a driver returns, after any
-    address corrections are known).
+    trucks[0] is the EARLY truck (leaves first), trucks[1] the LATE truck (waits for
+    delayed packages), and trucks[-1] the SECOND-WAVE truck (leaves when a driver
+    returns, once any address corrections are known).
     """
     early_truck = trucks[0]
     late_truck = trucks[1] if len(trucks) > 1 else trucks[0]
@@ -153,31 +237,47 @@ def load_trucks(package_table, distance_table, trucks):
                 return truck
         raise ValueError(f"A package requires truck {number}, but there is no such truck.")
 
-    end_of_day_bundles = []
-    deadline_bundles = []
-
+    # Sort every bundle into the FIRST category it matches (most constrained first).
+    required_bundles, delayed_bundles, correction_bundles = [], [], []
+    deadline_bundles, end_of_day_bundles = [], []
     for bundle in build_bundles(package_table):
-        required = _bundle_required_truck(bundle, package_table)
-        if required is not None:
-            target = truck_number(required)
-            if not target.has_room_for(len(bundle)):
-                raise ValueError(f"Truck {required} is too full for required bundle {bundle}.")
-            target.load(bundle)
+        if _bundle_required_truck(bundle, package_table) is not None:
+            required_bundles.append(bundle)
         elif _bundle_has(bundle, package_table, lambda p: p.hub_arrival_time is not None):
-            _first_truck_with_room([late_truck, second_wave_truck], bundle).load(bundle)
-        elif _bundle_has(bundle, package_table, lambda p: p.correction is not None):
-            _first_truck_with_room([second_wave_truck], bundle).load(bundle)
+            delayed_bundles.append(bundle)
+        elif _bundle_has(bundle, package_table,
+                         lambda p: p.correction is not None or p.has_wrong_address):
+            correction_bundles.append(bundle)
         elif _bundle_has(bundle, package_table, lambda p: p.deadline is not None):
             deadline_bundles.append(bundle)
         else:
             end_of_day_bundles.append(bundle)
 
-    # Deadline packages go out first. Larger bundles are placed first so they still fit.
-    deadline_bundles.sort(key=lambda b: (-len(b), b[0]))
-    for bundle in deadline_bundles:
-        _first_truck_with_room([early_truck, late_truck, second_wave_truck], bundle).load(bundle)
+    # 1) Required trucks are not negotiable, so they are loaded first.
+    for bundle in required_bundles:
+        target = truck_number(_bundle_required_truck(bundle, package_table))
+        if not target.has_room_for(len(bundle)):
+            raise ValueError(f"Truck {target.truck_id} is too full for required bundle {bundle}.")
+        target.load(bundle)
 
-    # EOD packages: repeatedly place the bundle that is closest to any truck with room.
+    # 2) Delayed bundles ride the late truck, which simply waits for them at the hub.
+    for bundle in delayed_bundles:
+        _choose_truck([late_truck, second_wave_truck, early_truck],
+                      bundle, package_table, distance_table, day_start).load(bundle)
+
+    # 3) Wrong-address bundles ride the second-wave truck, which leaves after the fix.
+    for bundle in correction_bundles:
+        _choose_truck([second_wave_truck, late_truck, early_truck],
+                      bundle, package_table, distance_table, day_start).load(bundle)
+
+    # 4) Deadline bundles: most urgent first (bigger bundles first on a tie), onto the
+    #    truck that leaves earliest and still has room.
+    deadline_bundles.sort(key=lambda b: (_earliest_deadline(b, package_table), -len(b), b[0]))
+    for bundle in deadline_bundles:
+        _choose_truck([early_truck, late_truck, second_wave_truck],
+                      bundle, package_table, distance_table, day_start).load(bundle)
+
+    # 5) EOD bundles: each round, place the bundle closest to any truck with room.
     while end_of_day_bundles:
         best_bundle, best_truck, best_miles = None, None, None
         for bundle in end_of_day_bundles:
@@ -188,7 +288,8 @@ def load_trucks(package_table, distance_table, trucks):
                 if best_miles is None or miles < best_miles:
                     best_bundle, best_truck, best_miles = bundle, truck, miles
         if best_bundle is None:
-            raise ValueError("The trucks are full. There are more packages than total capacity.")
+            raise ValueError("The trucks are full: there are more packages than "
+                             "trucks x capacity, and each truck makes one trip.")
         best_truck.load(best_bundle)
         end_of_day_bundles.remove(best_bundle)
 
@@ -205,14 +306,16 @@ class _PlannedStop:
 
 
 def _nearest_neighbor_route(package_ids, package_table, distance_table, departure_time,
-                            speed_mph, deadline_first):
+                            speed_mph, priority):
     """
     Build one candidate route with the nearest-neighbor heuristic.
 
-    From the current location, pick the closest address that still has packages
-    waiting. With deadline_first=True, only addresses that hold a deadline package are
-    considered until none are left. Every package for the chosen address is delivered
-    in a single stop.
+    From the current location, drive to the closest address that still has packages
+    waiting, and deliver every package for that address in one stop. `priority`
+    limits which packages may be chosen next:
+        "none"     - any remaining package
+        "deadline" - only packages with a deadline, until none are left
+        "earliest" - only packages sharing the earliest remaining deadline
 
     Returns (stops, total_miles, late_package_ids). Nothing on the packages is changed.
     """
@@ -224,22 +327,27 @@ def _nearest_neighbor_route(package_ids, package_table, distance_table, departur
     late = []
 
     while remaining:
-        # Which packages are we allowed to choose from right now?
+        # Which packages may we choose from right now?
         candidates = remaining
-        if deadline_first:
-            with_deadline = [pid for pid in remaining
-                             if package_table.lookup(pid).deadline is not None]
-            if with_deadline:
-                candidates = with_deadline
+        if priority != "none":
+            earliest = _earliest_deadline(remaining, package_table)
+            if earliest != NO_DEADLINE:
+                candidates = []
+                for package_id in remaining:
+                    deadline = package_table.lookup(package_id).deadline
+                    if deadline is None:
+                        continue
+                    if priority == "deadline" or deadline.total_seconds() == earliest:
+                        candidates.append(package_id)
 
         # Greedy choice: the closest candidate address. Ties go to the earlier deadline,
-        # then the lower package ID, so the result is always the same.
+        # then the lower package ID, so the result is the same every run.
         best_id, best_key = None, None
         for package_id in candidates:
             package = package_table.lookup(package_id)
             miles_away = distance_table.distance_between(current_address, package.address)
             deadline_seconds = (package.deadline.total_seconds()
-                                if package.deadline is not None else float("inf"))
+                                if package.deadline is not None else NO_DEADLINE)
             key = (miles_away, deadline_seconds, package_id)
             if best_key is None or key < best_key:
                 best_id, best_key = package_id, key
@@ -263,23 +371,28 @@ def _nearest_neighbor_route(package_ids, package_table, distance_table, departur
     return stops, miles, late
 
 
+ROUTE_VARIANTS = [
+    ("none", "nearest neighbor"),
+    ("deadline", "deadline-first nearest neighbor"),
+    ("earliest", "earliest-deadline-first nearest neighbor"),
+]
+
+
 def plan_route(truck, package_table, distance_table):
     """
-    Step 2 of the algorithm: try both nearest-neighbor variants for this truck. Keep
-    the shortest one that meets every deadline. If neither does, keep the one with the
+    Step 3 of the algorithm: try every nearest-neighbor variant for this truck. Keep
+    the shortest one that meets every deadline. If none does, keep the one with the
     fewest late packages so the problem appears clearly in the validation report.
     """
-    candidates = []
-    for deadline_first in (False, True):
+    best = None
+    for priority, name in ROUTE_VARIANTS:
         stops, miles, late = _nearest_neighbor_route(
             truck.package_ids, package_table, distance_table,
-            truck.departure_time, truck.speed_mph, deadline_first)
-        name = "deadline-first nearest neighbor" if deadline_first else "nearest neighbor"
-        candidates.append((len(late), miles, name, stops))
-
-    candidates.sort(key=lambda c: (c[0], c[1]))
-    _, miles, name, stops = candidates[0]
-    return stops, miles, name
+            truck.departure_time, truck.speed_mph, priority)
+        score = (len(late), miles)
+        if best is None or score < best[0]:
+            best = (score, stops, miles, name)
+    return best[1], best[2], best[3]
 
 
 def _commit_route(truck, stops, miles, strategy, package_table, distance_table):
@@ -287,14 +400,17 @@ def _commit_route(truck, stops, miles, strategy, package_table, distance_table):
     truck.route_strategy = strategy
     truck.stops = [RouteStop(truck.departure_time, distance_table.hub_address,
                              distance_table.name_of(distance_table.hub_address), 0.0, [])]
+    for package_id in truck.package_ids:
+        package = package_table.lookup(package_id)
+        package.truck_id = truck.truck_id
+        package.departure_time = truck.departure_time
+        package.status = STATUS_EN_ROUTE  # loaded and on the road
     for stop in stops:
         truck.stops.append(RouteStop(stop.arrival_time, stop.address,
                                      distance_table.name_of(stop.address),
                                      stop.miles_so_far, stop.package_ids))
         for package_id in stop.package_ids:
             package = package_table.lookup(package_id)
-            package.truck_id = truck.truck_id
-            package.departure_time = truck.departure_time
             package.delivery_time = stop.arrival_time
             package.status = STATUS_DELIVERED
     truck.total_miles = miles
@@ -302,10 +418,13 @@ def _commit_route(truck, stops, miles, strategy, package_table, distance_table):
     truck.end_time = truck.finish_time
 
 
+def _miles_home(truck, distance_table):
+    return distance_table.distance_between(truck.stops[-1].address, distance_table.hub_address)
+
+
 def _send_truck_home(truck, distance_table):
     """Add the drive back to the hub, so its driver can take out another truck."""
-    last_address = truck.stops[-1].address
-    miles_home = distance_table.distance_between(last_address, distance_table.hub_address)
+    miles_home = _miles_home(truck, distance_table)
     truck.total_miles += miles_home
     truck.end_time = truck.finish_time + travel_time(miles_home, truck.speed_mph)
     truck.returns_to_hub = True
@@ -317,63 +436,60 @@ def _send_truck_home(truck, distance_table):
 # -------------------------------------------------------------------------- dispatch
 def dispatch_trucks(trucks, package_table, distance_table, number_of_drivers, day_start):
     """
-    Step 3 of the algorithm: give each truck a driver and a departure time, then route it.
+    Step 2 of the algorithm: give each truck a driver and a departure time, then
+    route it (step 3) as it leaves.
 
-    Each driver is a small list: [driver_id, time_free_at_hub, truck_currently_driving].
+    Each driver is a small list: [driver_id, truck_currently_assigned]. A driver with
+    no truck yet is at the hub from the start of the day.
     """
-    # Before routing, apply any address correction whose time has come by the time the
-    # truck can leave. Each truck's ready time already includes those correction times.
+    # A truck is ready once every package on it can leave the hub (delays, address fixes).
     for truck in trucks:
-        truck.ready_time = day_start
-        for package_id in truck.package_ids:
-            package = package_table.lookup(package_id)
-            ready = package.earliest_ready_time(day_start)
-            if ready > truck.ready_time:
-                truck.ready_time = ready
+        truck.ready_time = _ready_time(truck.package_ids, package_table, day_start)
 
     drivers = []
     for driver_number in range(1, number_of_drivers + 1):
-        drivers.append([driver_number, day_start, None])
+        drivers.append([driver_number, None])
 
+    # Most urgent deadline first, then the earliest ready time. Empty trucks stay home.
     dispatch_order = [truck for truck in trucks if truck.package_ids]
-    dispatch_order.sort(key=lambda t: (t.ready_time, t.truck_id))
+    dispatch_order.sort(key=lambda t: (_earliest_deadline(t.package_ids, package_table),
+                                       t.ready_time, t.truck_id))
 
     for truck in dispatch_order:
         # Find the driver who can be at the hub soonest.
         best_driver, best_time = None, None
         for driver in drivers:
-            if driver[2] is None:
-                free_at = driver[1]
+            current = driver[1]
+            if current is None:
+                free_at = day_start
             else:
-                current = driver[2]
-                last_address = current.stops[-1].address
-                miles_home = distance_table.distance_between(last_address,
-                                                             distance_table.hub_address)
-                free_at = current.finish_time + travel_time(miles_home, current.speed_mph)
+                free_at = current.finish_time + travel_time(_miles_home(current, distance_table),
+                                                            current.speed_mph)
             if best_time is None or free_at < best_time:
                 best_driver, best_time = driver, free_at
 
         # If that driver is out on another truck, that truck now drives back to the hub.
-        if best_driver[2] is not None:
-            _send_truck_home(best_driver[2], distance_table)
+        if best_driver[1] is not None:
+            _send_truck_home(best_driver[1], distance_table)
 
         truck.driver_id = best_driver[0]
         truck.departure_time = max(truck.ready_time, best_time)
 
-        # The address correction is known by departure time, so apply it now.
+        # The corrected address is known by departure time (it is part of the ready
+        # time), so the truck routes to the right place.
         for package_id in truck.package_ids:
             package = package_table.lookup(package_id)
-            if package.correction is not None and package.correction.effective_time <= truck.departure_time:
+            if (package.correction is not None
+                    and package.correction.effective_time <= truck.departure_time):
                 package.apply_address_correction()
 
         stops, miles, strategy = plan_route(truck, package_table, distance_table)
         _commit_route(truck, stops, miles, strategy, package_table, distance_table)
-        best_driver[1] = truck.end_time
-        best_driver[2] = truck
+        best_driver[1] = truck
 
 
 def run_delivery_day(package_table, distance_table, trucks, number_of_drivers, day_start):
-    """Run the whole day: load the trucks, dispatch them, and route every delivery."""
-    load_trucks(package_table, distance_table, trucks)
+    """Run the whole day: load the trucks, then dispatch and route them."""
+    load_trucks(package_table, distance_table, trucks, day_start)
     dispatch_trucks(trucks, package_table, distance_table, number_of_drivers, day_start)
     return trucks
